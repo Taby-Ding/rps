@@ -101,6 +101,14 @@
   	  box-shadow: 0 4px 10px rgba(0,0,0,0.3); /* 加一点阴影更有质感 */
 	}
 
+	/* 👇 新增：当要求“输给它”时的样式 (红色背景，警示玩家) 👇 */
+	.bottom-msg.lose-mode {
+    	  background: rgba(255, 71, 87, 0.9); /* 鲜艳的红色 */
+    	  color: white;
+  	  box-shadow: 0 0 15px rgba(255, 71, 87, 0.6);
+    	  transform: scale(1.1); /* 稍微放大一点引起注意 */
+	}
+
         .timer-wrap { width: 80%; height: 2vh; background: rgba(255,255,255,0.3); border-radius: 1vh; margin: 3vh auto 0; overflow: hidden; }
         .timer-bar { height: 100%; width: 100%; background: #2ed573; }
 
@@ -145,21 +153,35 @@
 	    padding: 25px;
 	    border-radius: 20px;
 	    width: 85%;
-	    max-width: 800px;
- 	   border: 2px solid rgba(255, 255, 255, 0.3);
- 	   box-shadow: 0 20px 50px rgba(0,0,0,1);
+	    max-width: 1000px;
+	/* --- 核心修复：防止撑出屏幕外 --- */
+    	    max-height: 85vh;  /* 最大只占屏幕高度的 70% */
+   	    overflow-y: auto;  /* 内容太多时显示滚动条 */
+ 	    border: 2px solid rgba(255, 255, 255, 0.3);
+ 	    box-shadow: 0 20px 50px rgba(0,0,0,1);
 	    text-align: left;
 	    position: relative; /* 确保层级正确 */
 	}
 
+	/* 顺便隐藏一下丑陋的默认滚动条（可选） */
+	.rules-box::-webkit-scrollbar { width: 6px; }
+	.rules-box::-webkit-scrollbar-thumb { background-color: #666; border-radius: 4px; }
+
 	.rules-box h2 {
   	  text-align: center;
-  	  margin-top: 0;
+   	 margin-top: 0;
  	   font-size: 6vmin;
- 	   color: #ffd32a;
-  	  border-bottom: 1px dashed rgba(255,255,255,0.2); /* 虚线分割 */
-  	  padding-bottom: 15px;
-	  margin-bottom: 15px;
+  	  color: #ffd32a;
+ 	   border-bottom: 1px dashed rgba(255,255,255,0.2);
+	    padding-bottom: 15px;
+  	  margin-bottom: 15px;
+    
+ 	   /* 👇 新增以下代码：让标题吸附在顶部，不会被滚走 👇 */
+  	  position: sticky;       /* 粘性定位 */
+ 	   top: -10px;             /* 吸顶位置（稍微往上一点抵消padding） */
+ 	   background: #2f3542;    /* 背景色必须和卡片背景一致，防止透明 */
+  	  z-index: 5;             /* 保证在文字上面 */
+  	  padding-top: 15px;      /* 补一点上边距 */
 	}
 
 	/* 列表样式 */
@@ -271,7 +293,7 @@
             <li><strong>核心逻辑：</strong><span style="color:#7bed9f">只看图标，出拳赢它！</span><br>看到电脑出 ✌️，你要出 ✊，累计输3次后游戏结束</li>
             <li><strong>🟢 有手就行：</strong><br>关卡提升，反应时间变短。</li>
             <li><strong>🟡 眼见为虚：</strong><br><span style="color:#ff4757">文字陷阱！</span>文字可能写“布”，但图标是“石头”，<strong>请只看图标</strong>。</li>
-            <li><strong>🔴 大脑超载：</strong><br><span style="color:#ff4757">语音陷阱！</span>听到的和看到的不一样，<strong>请坚定只看图标</strong>。</li>
+            <li><strong>🔴 大脑超载：</strong><br><span style="color:#ff4757">语音陷阱！除了赢，还有输！</span>听到的和看到的不一样，有赢有输，<strong>请坚定只看图标和输赢指示，赢是绿色提示，输是红色提示</strong>。</li>
             <li><strong>👌 操作：</strong><br>选择难度后，请允许打开摄像头，比出 OK 手势后开始游戏。</li>
         </ul>
         <button class="btn-close" onclick="hideRules()">我明白了</button>
@@ -286,6 +308,8 @@
     <div id="wait-ok" class="overlay hidden" style="background: rgba(0,0,0,0.6);">
         <div style="font-size: 25vmin; margin-bottom: 2vh;">👌</div>
         <h2 style="font-size: 6vmin;">比 "OK" 开始</h2>
+	<!-- 👇 新增提示 👇 -->
+  	  <p style="font-size: 4vmin; color: #aaa; margin-top: 20px;">(如果识别不出，请点击屏幕跳过)</p>
     </div>
 
     <div id="game-over" class="overlay hidden">
@@ -318,6 +342,8 @@
     const CONFIG = { baseTime: 3000, minTime: 600, timeDecay: 0.85, lives: 3 };
     const MOVES = { rock: { icon: '✊', name: '石头' }, scissors: { icon: '✌️', name: '剪刀' }, paper: { icon: '🖐', name: '布' } };
     const WIN_RULES = { rock: 'paper', paper: 'scissors', scissors: 'rock' };
+   // 👇 新增：输的规则 (电脑出rock -> 我出scissors) 👇
+    const LOSE_RULES = { rock: 'scissors', paper: 'rock', scissors: 'paper' };
     
     let state = { status: 'MENU', diff: 'easy', lvl: 1, lives: 3, limit: CONFIG.baseTime, startT: 0, target: null, camReady: false };
     let animationId = null;
@@ -339,7 +365,7 @@
 
             camera = new Camera(video, {
                 onFrame: async () => { await hands.send({image: video}); },
-                width: 1280, height: 720, facingMode: 'user'
+                //width: 1280, height: 720, facingMode: 'user'    取消摄像头分辨率设置
             });
 
             $('loading-box').classList.add('hidden');
@@ -407,7 +433,7 @@
         if (difficulty === 'hard') hud.classList.add('layout-confusion', 'mode-hard');
 
         if (!state.camReady) {
-            camera.start().then(() => state.camReady = true).catch(err => alert("摄像头启动失败"));
+            camera.start().then(() => state.camReady = true).catch(err => alert("摄像头错误: " + err.name + " - " + err.message));
         }
         
         state.status = 'WAIT_OK';
@@ -449,48 +475,66 @@
     }
 
     function startRound() {
-        state.status = 'PLAYING';
-        $('enemy-area').classList.remove('hidden');
-        $('timer-wrapper').classList.remove('hidden');
-        
-        const keys = Object.keys(MOVES);
-        const real = keys[Math.floor(Math.random() * 3)];
-        state.target = WIN_RULES[real];
-
-        let txt = MOVES[real].name;
-        
-        // 默认播放真实声音，困难模式下会变
-        let soundKey = real; 
-
-        if (state.diff !== 'easy') {
-            if (Math.random() > 0.5) {
-                const fake = keys.filter(k => k !== real)[Math.floor(Math.random()*2)];
-                txt = MOVES[fake].name;
-                if (state.diff === 'medium') $('e-text').style.color = '#ff4757';
-            } else {
-                if (state.diff === 'medium') $('e-text').style.color = 'white';
-            }
-        }
-        
-        if (state.diff === 'hard') {
-            const fakeS = keys[Math.floor(Math.random()*3)];
-            soundKey = fakeS;
-        }
-
-        $('e-icon').innerText = MOVES[real].icon;
-        $('e-text').innerText = txt;
-        $('lvl-disp').innerText = state.lvl;
-        updateLives();
-        
-        // 播放音频
-        playMoveSound(soundKey);
-
-        state.startT = Date.now();
-        $('msg-disp').innerText = "赢它！";
-        
-        if (animationId) cancelAnimationFrame(animationId);
-        gameLoop();
+    state.status = 'PLAYING';
+    $('enemy-area').classList.remove('hidden');
+    $('timer-wrapper').classList.remove('hidden');
+    
+    // 1. 随机生成电脑出的牌
+    const keys = Object.keys(MOVES);
+    const real = keys[Math.floor(Math.random() * 3)];
+    
+    // --- 核心修改开始 ---
+    let isWinMode = true; // 默认是要赢
+    
+    // 只有在困难模式(hard)下，才有 40% 几率触发“输给它”
+    if (state.diff === 'hard' && Math.random() < 0.4) {
+        isWinMode = false;
     }
+    
+    // 计算目标手势
+    if (isWinMode) {
+        state.target = WIN_RULES[real];
+        $('msg-disp').innerText = "赢它！";
+        $('msg-disp').classList.remove('lose-mode'); // 移除红色样式
+    } else {
+        state.target = LOSE_RULES[real]; // 目标变成输给电脑
+        $('msg-disp').innerText = "输给它！"; // 文字改变
+        $('msg-disp').classList.add('lose-mode'); // 变成红色
+    }
+    // --- 核心修改结束 ---
+
+    // 下面是原有的干扰逻辑 (文字/语音干扰)
+    let txt = MOVES[real].name;
+    // 默认播放真实声音，困难模式下会变
+    let soundKey = real; 
+
+    if (state.diff !== 'easy') {
+        if (Math.random() > 0.5) {
+            const fake = keys.filter(k => k !== real)[Math.floor(Math.random()*2)];
+            txt = MOVES[fake].name;
+            if (state.diff === 'medium') $('e-text').style.color = '#ff4757';
+        } else {
+            if (state.diff === 'medium') $('e-text').style.color = 'white';
+        }
+    }
+    
+    if (state.diff === 'hard') {
+        const fakeS = keys[Math.floor(Math.random()*3)];
+        soundKey = fakeS;
+    }
+
+    $('e-icon').innerText = MOVES[real].icon;
+    $('e-text').innerText = txt;
+    $('lvl-disp').innerText = state.lvl;
+    updateLives();
+    
+    playMoveSound(soundKey);
+
+    state.startT = Date.now();
+    
+    if (animationId) cancelAnimationFrame(animationId);
+    gameLoop();
+}
 
     function updateLives() {
         let h = ''; for(let i=0; i<state.lives; i++) h += '❤️';
@@ -538,20 +582,39 @@
         $('game-over').classList.remove('hidden');
     }
 
-    function detect(lm) {
-        const isOpen = (t, p) => lm[t].y < lm[p].y;
-        const f = [isOpen(8,6), isOpen(12,10), isOpen(16,14), isOpen(20,18)];
-        const count = f.filter(Boolean).length;
-        const d = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
-        
-        if (d < 0.15 && f[1] && f[2] && f[3]) return 'ok';
-        if (count === 0) return 'rock';
-        if (count >= 4) return 'paper';
-        if (f[0] && f[1] && !f[2] && !f[3]) return 'scissors';
-        if (count === 1) return 'rock'; 
-        if (count === 3 && !f[0]) return 'ok';
-        return null;
-    }
+	function detect(lm) {
+  	  // 定义手指是否伸直（指尖 y < 指关节 y）
+ 	   const isOpen = (t, p) => lm[t].y < lm[p].y;
+    
+  	  // 检查 中指(12)、无名指(16)、小指(20) 的状态
+    	const middleOpen = isOpen(12, 10);
+    	const ringOpen = isOpen(16, 14);
+    	const pinkyOpen = isOpen(20, 18);
+    
+  	  // 计算手指伸展数量（食指、中指、无名指、小指）
+    	// 注意：这里我们单独算 count 用于猜拳判定
+    	const f = [isOpen(8,6), middleOpen, ringOpen, pinkyOpen];
+    	const count = f.filter(Boolean).length;
+
+    	// --- 修改重点：大幅放宽 OK 手势判定 ---
+    	// 计算拇指(4)与食指(8)的距离
+    	const d = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
+    
+   	 // 修改1：距离阈值从 0.15 放宽到 0.25 (手机上离得远也能识别)
+    	// 修改2：只要中指是伸直的，就认为是OK (防止和石头混淆)，不再强制要求无名指和小指
+    	if (d < 0.25 && middleOpen) return 'ok';
+
+    	// --- 猜拳判定 (保持不变) ---
+    	if (count === 0) return 'rock';
+    	if (count >= 4) return 'paper';
+    	if (f[0] && f[1] && !f[2] && !f[3]) return 'scissors'; // 剪刀标准手势
+    
+  	  // 猜拳容错
+    	if (count === 1) return 'rock'; 
+    	if (count === 3 && !f[0]) return 'ok'; // 三指张开有时候也是ok的变种
+
+ 	   return null;
+	}
 
     function onResults(res) {
         ctx.save();
@@ -568,6 +631,14 @@
         }
         ctx.restore();
     }
+
+	// 点击屏幕跳过 "比OK" 环节的保底逻辑
+    	$('wait-ok').addEventListener('click', function() {
+        // 只有在当前状态是 "WAIT_OK" 时点击才有效
+          if (state.status === 'WAIT_OK') {
+            startLevelSeq(); // 强行进入倒计时
+        }
+    });
 </script>
 </body>
 </html>
