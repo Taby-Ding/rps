@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>猜拳挑战-最终完整版</title>
+    
+    <!-- 核心库 (使用 unpkg 源以提高国内访问稳定性) -->
+    <script src="https://unpkg.com/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            margin: 0; padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #000;
+            color: white;
+            height: 100vh; width: 100vw;
+            overflow: hidden;
+            position: fixed;
+            touch-action: none; /* 禁止橡皮筋效果 */
+        }
+        
+        /* 确保按钮在移动端可点击 */
+        button { touch-action: manipulation; pointer-events: auto !important; }
+
+        .game-wrapper { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        .input_video { display: none; }
+        .output_canvas {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            object-fit: cover; transform: scaleX(-1);
+        }
+
+        .hud {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 5; pointer-events: none;
+            display: flex; flex-direction: column; justify-content: space-between;
+            /* 适配刘海屏 */
+            padding: max(10px, env(safe-area-inset-top)) 15px max(20px, env(safe-area-inset-bottom)) 15px;
+        }
+
+        /* 顶部信息栏防溢出设计 */
+        .top-info {
+            display: flex; justify-content: space-between; align-items: center;
+            width: 100%;
+            font-size: 4.5vmin;
+            font-weight: bold;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.2);
+            padding: 8px 10px;
+            border-radius: 12px;
+            box-sizing: border-box;
+        }
+        .top-info span { white-space: nowrap; }
+
+        .center-area {
+            position: absolute; top: 40%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 100%; text-align: center;
+        }
+
+        .countdown {
+            font-size: 40vmin; font-weight: 900; color: #ffd32a;
+            text-shadow: 0 0 20px black;
+        }
+
+        .enemy-box { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .enemy-icon { font-size: 40vmin; line-height: 1; filter: drop-shadow(0 0 15px rgba(0,0,0,0.8)); order: 1; transition: all 0.3s; }
+        .enemy-text { font-size: 10vmin; font-weight: 800; background: rgba(0,0,0,0.6); padding: 10px 30px; border-radius: 15px; margin-top: 2vh; order: 2; transition: all 0.3s; }
+
+        /* 干扰模式布局 */
+        .hud.layout-confusion .enemy-icon { font-size: 15vmin; opacity: 0.9; order: 2; margin-top: 2vh; }
+        .hud.layout-confusion .enemy-text { font-size: 35vmin; background: rgba(0,0,0,0.4); padding: 0; margin: 0; line-height: 1.2; order: 1; text-shadow: 0 0 20px rgba(0,0,0,0.9); }
+        .hud.layout-confusion.mode-hard .enemy-text { color: #ff4757 !important; transform: scale(1.1); }
+
+        .bottom-msg { text-align: center; font-size: 6vmin; color: #7bed9f; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 10px; }
+        .timer-wrap { width: 80%; height: 2vh; background: rgba(255,255,255,0.3); border-radius: 1vh; margin: 3vh auto 0; overflow: hidden; }
+        .timer-bar { height: 100%; width: 100%; background: #2ed573; }
+
+        .overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(10, 10, 10, 0.95); z-index: 50;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            pointer-events: auto;
+        }
+
+        .btn-group { display: flex; flex-direction: column; gap: 2vh; width: 70%; }
+        button {
+            padding: 2.5vh; font-size: 5vmin; border: none; border-radius: 1.5vh;
+            color: white; font-weight: bold; box-shadow: 0 4px 0 rgba(0,0,0,0.3);
+            transition: transform 0.1s; position: relative; overflow: hidden;
+            cursor: pointer;
+        }
+        button:active { transform: scale(0.95); }
+        .btn-easy { background: linear-gradient(to right, #2ed573, #26af61); }
+        .btn-medium { background: linear-gradient(to right, #ffa502, #cd8403); }
+        .btn-hard { background: linear-gradient(to right, #ff4757, #ce3946); }
+        
+        /* 增大按钮点击区域，确保点击有效 */
+        .btn-restart { background: #3742fa; margin-top: 3vh; width: 60%; padding: 3vh; z-index: 100; }
+        .hidden { display: none !important; }
+
+        .loading-spinner {
+            border: 4px solid rgba(255,255,255,0.1); border-left: 4px solid #fff;
+            border-radius: 50%; width: 40px; height: 40px;
+            animation: spin 1s linear infinite; margin-bottom: 20px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .error-tips { color: #ff4757; font-size: 3.5vmin; margin-top: 20px; text-align: center; max-width: 80%; }
+    </style>
+</head>
+<body>
+
+<div class="game-wrapper">
+    <video class="input_video" playsinline webkit-playsinline></video>
+    <canvas class="output_canvas"></canvas>
+
+    <div id="ui-hud" class="hud hidden">
+        <div class="top-info">
+            <span id="diff-disp">难度</span>
+            <span>关卡 <span id="lvl-disp">1</span></span>
+            <span id="lives-disp">❤️❤️❤️</span>
+        </div>
+        <div class="center-area">
+            <div id="cnt-down" class="countdown hidden">3</div>
+            <div id="enemy-area" class="enemy-box hidden">
+                <div id="e-icon" class="enemy-icon">✊</div>
+                <div id="e-text" class="enemy-text">石头</div>
+                <div style="font-size: 3.5vmin; opacity: 0.8; margin-top:1vh; order:3;">电脑出招</div>
+            </div>
+             <div class="timer-wrap hidden" id="timer-wrapper"><div id="t-bar" class="timer-bar"></div></div>
+        </div>
+        <div class="bottom-msg" id="msg-disp">等待开始...</div>
+    </div>
+
+    <!-- 菜单/加载层 -->
+    <div id="menu" class="overlay">
+        <h1 style="font-size: 8vmin; margin-bottom: 2vh;">📷 猜拳大挑战</h1>
+        
+        <div id="loading-box">
+            <div class="loading-spinner"></div>
+            <p id="loading-text" style="font-size: 4vmin; color:#aaa;">资源下载中...</p>
+            <div id="error-msg" class="error-tips hidden">
+                加载时间过长<br>请尝试刷新页面或检查网络
+            </div>
+        </div>
+
+        <div id="menu-btns" class="btn-group hidden">
+            <button class="btn-easy" onclick="initGame('easy')">🟢 简单<br><span style="font-size:3vmin;opacity:0.8">常规大小，仅加速</span></button>
+            <button class="btn-medium" onclick="initGame('medium')">🟡 中等<br><span style="font-size:3vmin;opacity:0.8">文字巨大 + 文字干扰</span></button>
+            <button class="btn-hard" onclick="initGame('hard')">🔴 困难<br><span style="font-size:3vmin;opacity:0.8">文字巨大 + 语音干扰</span></button>
+        </div>
+    </div>
+
+    <div id="wait-ok" class="overlay hidden" style="background: rgba(0,0,0,0.6);">
+        <div style="font-size: 25vmin; margin-bottom: 2vh;">👌</div>
+        <h2 style="font-size: 6vmin;">比 "OK" 开始</h2>
+    </div>
+
+    <div id="game-over" class="overlay hidden">
+        <h1 style="color: #ff4757; font-size: 8vmin;">挑战失败</h1>
+        <p style="font-size: 5vmin;">难度: <span id="end-diff" style="color:#ffd32a"></span></p>
+        <p style="font-size: 5vmin;">止步于第 <span id="end-lvl" style="font-size: 10vmin; font-weight:bold;">1</span> 关</p>
+        <button class="btn-restart" onclick="resetToMenu()">再来一次</button>
+    </div>
+</div>
+
+<script>
+    // --- 0. 音频配置 ---
+    // 请确保根目录下有这些文件
+    const AUDIO_CLIPS = {
+        rock: new Audio('./rock.mp3'),
+        scissors: new Audio('./scissors.mp3'),
+        paper: new Audio('./paper.mp3')
+    };
+
+    // --- 资源超时检测 ---
+    setTimeout(() => {
+        const loadBox = document.getElementById('loading-box');
+        if (!loadBox.classList.contains('hidden')) {
+            document.getElementById('loading-text').innerText = "资源响应缓慢...";
+            document.getElementById('error-msg').classList.remove('hidden');
+        }
+    }, 10000);
+
+    // --- 游戏变量 ---
+    const CONFIG = { baseTime: 3000, minTime: 600, timeDecay: 0.85, lives: 3 };
+    const MOVES = { rock: { icon: '✊', name: '石头' }, scissors: { icon: '✌️', name: '剪刀' }, paper: { icon: '🖐', name: '布' } };
+    const WIN_RULES = { rock: 'paper', paper: 'scissors', scissors: 'rock' };
+    
+    let state = { status: 'MENU', diff: 'easy', lvl: 1, lives: 3, limit: CONFIG.baseTime, startT: 0, target: null, camReady: false };
+    let animationId = null;
+    let hands, camera;
+
+    const $ = id => document.getElementById(id);
+    const video = document.querySelector('.input_video');
+    const canvas = document.querySelector('.output_canvas');
+    const ctx = canvas.getContext('2d');
+
+    // --- 初始化 ---
+    window.onload = function() {
+        if (typeof Hands === 'undefined') return;
+
+        try {
+            hands = new Hands({locateFile: f => `https://unpkg.com/@mediapipe/hands/${f}`});
+            hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+            hands.onResults(onResults);
+
+            camera = new Camera(video, {
+                onFrame: async () => { await hands.send({image: video}); },
+                width: 1280, height: 720, facingMode: 'user'
+            });
+
+            $('loading-box').classList.add('hidden');
+            $('menu-btns').classList.remove('hidden');
+        } catch (e) {
+            alert("初始化错误: " + e);
+        }
+    };
+
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // --- 1. 音频解锁逻辑 ---
+    function unlockAudio() {
+        Object.values(AUDIO_CLIPS).forEach(audio => {
+            // 静音播放一下，然后暂停，以解锁移动端自动播放限制
+            audio.muted = true;
+            audio.play().then(() => {
+                audio.pause();
+                audio.currentTime = 0;
+                audio.muted = false; // 恢复音量
+            }).catch(e => console.log("音频解锁失败(需要用户点击):", e));
+        });
+    }
+
+    // --- 2. 播放指定招式音频 ---
+    function playMoveSound(moveKey) {
+        // 按照设计：只有困难模式才播放干扰音
+        // 如果想全模式播放，注释掉下面这一行即可
+        if (state.diff !== 'hard') return;
+
+        const audio = AUDIO_CLIPS[moveKey];
+        if (audio) {
+            audio.currentTime = 0;
+            audio.play().catch(e => console.error("播放失败:", e));
+        }
+    }
+
+    // --- 游戏流程 ---
+    window.initGame = function(difficulty) {
+        // 点击按钮瞬间解锁音频
+        unlockAudio();
+
+        state.diff = difficulty;
+        state.lives = CONFIG.lives;
+        state.lvl = 1;
+        state.limit = CONFIG.baseTime;
+
+        $('diff-disp').innerText = difficulty === 'easy' ? '简单' : (difficulty === 'medium' ? '中等' : '困难');
+        $('menu').classList.add('hidden');
+        
+        const hud = $('ui-hud');
+        hud.classList.remove('hidden', 'layout-confusion', 'mode-hard');
+        if (difficulty === 'medium') hud.classList.add('layout-confusion');
+        if (difficulty === 'hard') hud.classList.add('layout-confusion', 'mode-hard');
+
+        if (!state.camReady) {
+            camera.start().then(() => state.camReady = true).catch(err => alert("摄像头启动失败"));
+        }
+        
+        state.status = 'WAIT_OK';
+        $('wait-ok').classList.remove('hidden');
+    }
+
+    // --- 软重置（解决手机端reload无效） ---
+    window.resetToMenu = function() {
+        unlockAudio();
+        $('game-over').classList.add('hidden');
+        $('menu').classList.remove('hidden');
+        $('ui-hud').classList.add('hidden');
+        state.status = 'MENU';
+        if (animationId) cancelAnimationFrame(animationId);
+    }
+
+    function startLevelSeq() {
+        state.status = 'COUNTDOWN';
+        $('wait-ok').classList.add('hidden');
+        $('enemy-area').classList.add('hidden');
+        $('timer-wrapper').classList.add('hidden');
+        $('msg-disp').innerText = "准备...";
+        
+        let c = 3;
+        $('cnt-down').classList.remove('hidden');
+        $('cnt-down').innerText = c;
+        const t = setInterval(() => {
+            c--;
+            if (c > 0) $('cnt-down').innerText = c;
+            else {
+                clearInterval(t);
+                $('cnt-down').innerText = "GO!";
+                setTimeout(() => {
+                    $('cnt-down').classList.add('hidden');
+                    startRound();
+                }, 400);
+            }
+        }, 1000);
+    }
+
+    function startRound() {
+        state.status = 'PLAYING';
+        $('enemy-area').classList.remove('hidden');
+        $('timer-wrapper').classList.remove('hidden');
+        
+        const keys = Object.keys(MOVES);
+        const real = keys[Math.floor(Math.random() * 3)];
+        state.target = WIN_RULES[real];
+
+        let txt = MOVES[real].name;
+        
+        // 默认播放真实声音，困难模式下会变
+        let soundKey = real; 
+
+        if (state.diff !== 'easy') {
+            if (Math.random() > 0.5) {
+                const fake = keys.filter(k => k !== real)[Math.floor(Math.random()*2)];
+                txt = MOVES[fake].name;
+                if (state.diff === 'medium') $('e-text').style.color = '#ff4757';
+            } else {
+                if (state.diff === 'medium') $('e-text').style.color = 'white';
+            }
+        }
+        
+        if (state.diff === 'hard') {
+            const fakeS = keys[Math.floor(Math.random()*3)];
+            soundKey = fakeS;
+        }
+
+        $('e-icon').innerText = MOVES[real].icon;
+        $('e-text').innerText = txt;
+        $('lvl-disp').innerText = state.lvl;
+        updateLives();
+        
+        // 播放音频
+        playMoveSound(soundKey);
+
+        state.startT = Date.now();
+        $('msg-disp').innerText = "赢它！";
+        
+        if (animationId) cancelAnimationFrame(animationId);
+        gameLoop();
+    }
+
+    function updateLives() {
+        let h = ''; for(let i=0; i<state.lives; i++) h += '❤️';
+        $('lives-disp').innerHTML = h;
+    }
+
+    function gameLoop() {
+        if (state.status !== 'PLAYING') return;
+        const now = Date.now();
+        const remain = state.limit - (now - state.startT);
+        const pct = Math.max(0, (remain / state.limit) * 100);
+        $('t-bar').style.width = pct + '%';
+        $('t-bar').style.background = pct < 30 ? '#ff4757' : '#2ed573';
+
+        if (remain <= 0) roundEnd(false, "超时!");
+        else animationId = requestAnimationFrame(gameLoop);
+    }
+
+    function roundEnd(win, msg) {
+        state.status = 'ROUND_END';
+        if (animationId) cancelAnimationFrame(animationId);
+        if (win) {
+            $('msg-disp').innerText = "✅ " + msg;
+            $('t-bar').style.width = '100%';
+            setTimeout(() => {
+                state.lvl++;
+                state.limit = Math.max(CONFIG.minTime, state.limit * CONFIG.timeDecay);
+                startLevelSeq();
+            }, 1200);
+        } else {
+            state.lives--;
+            updateLives();
+            $('msg-disp').innerText = "❌ " + msg;
+            setTimeout(() => {
+                if (state.lives > 0) startLevelSeq();
+                else gameOver();
+            }, 1500);
+        }
+    }
+
+    function gameOver() {
+        state.status = 'GAME_OVER';
+        $('end-diff').innerText = state.diff === 'easy' ? '简单' : (state.diff === 'medium' ? '中等' : '困难');
+        $('end-lvl').innerText = state.lvl;
+        $('game-over').classList.remove('hidden');
+    }
+
+    function detect(lm) {
+        const isOpen = (t, p) => lm[t].y < lm[p].y;
+        const f = [isOpen(8,6), isOpen(12,10), isOpen(16,14), isOpen(20,18)];
+        const count = f.filter(Boolean).length;
+        const d = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
+        
+        if (d < 0.15 && f[1] && f[2] && f[3]) return 'ok';
+        if (count === 0) return 'rock';
+        if (count >= 4) return 'paper';
+        if (f[0] && f[1] && !f[2] && !f[3]) return 'scissors';
+        if (count === 1) return 'rock'; 
+        if (count === 3 && !f[0]) return 'ok';
+        return null;
+    }
+
+    function onResults(res) {
+        ctx.save();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(res.image, 0, 0, canvas.width, canvas.height);
+        if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+            const lm = res.multiHandLandmarks[0];
+            drawConnectors(ctx, lm, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 6});
+            drawLandmarks(ctx, lm, {color: '#FF0000', lineWidth: 3, radius: 4});
+            
+            const ges = detect(lm);
+            if (state.status === 'WAIT_OK' && ges === 'ok') startLevelSeq();
+            else if (state.status === 'PLAYING' && ges === state.target) roundEnd(true, "胜利!");
+        }
+        ctx.restore();
+    }
+</script>
+</body>
+</html>
