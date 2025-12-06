@@ -345,7 +345,7 @@
    // 👇 新增：输的规则 (电脑出rock -> 我出scissors) 👇
     const LOSE_RULES = { rock: 'scissors', paper: 'rock', scissors: 'paper' };
     
-    let state = { status: 'MENU', diff: 'easy', lvl: 1, lives: 3, limit: CONFIG.baseTime, startT: 0, target: null, camReady: false };
+    let state = { status: 'MENU', diff: 'easy', lvl: 1, lives: 3, limit: CONFIG.baseTime, startT: 0, target: null, camReady: false,lastDetected: null, stableStartTime: 0 };
     let animationId = null;
     let hands, camera;
 
@@ -531,6 +531,10 @@
     playMoveSound(soundKey);
 
     state.startT = Date.now();
+
+     // 👇 新增：重置防抖变量 👇
+    state.lastDetected = null;
+    state.stableStartTime = Date.now(); // 初始给个时间防止报错
     
     if (animationId) cancelAnimationFrame(animationId);
     gameLoop();
@@ -619,15 +623,60 @@
     function onResults(res) {
         ctx.save();
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(res.image, 0, 0, canvas.width, canvas.height);
+        
+        // --- 核心修复：画面自适应不拉伸 (模拟 object-fit: cover) ---
+        const videoWidth = res.image.width;
+        const videoHeight = res.image.height;
+        const canvasWidth = canvas.width;
+        const canvasHeight = canvas.height;
+
+        // 1. 计算缩放比例：取宽比和高比中较大的那个，以保证填满屏幕
+        const scale = Math.max(canvasWidth / videoWidth, canvasHeight / videoHeight);
+        
+        // 2. 计算缩放后的实际尺寸
+        const scaledWidth = videoWidth * scale;
+        const scaledHeight = videoHeight * scale;
+
+        // 3. 计算居中需要的偏移量 (通常是负数，把多余部分移出去)
+        const offsetX = (canvasWidth - scaledWidth) / 2;
+        const offsetY = (canvasHeight - scaledHeight) / 2;
+
+        // 4. 绘制视频画面 (保持比例，居中裁剪)
+        ctx.drawImage(res.image, offsetX, offsetY, scaledWidth, scaledHeight);
+
+        // 5. 关键步骤：调整坐标系
+        // MediaPipe 的画线工具是基于 Canvas 整体宽高的 (0~1 映射到 canvasWidth/Height)
+        // 因为我们把画面裁剪/偏移了，所以必须移动坐标系，让红点能画在正确的位置
+        ctx.translate(offsetX, offsetY);
+        ctx.scale(scaledWidth / canvasWidth, scaledHeight / canvasHeight);
+        // -----------------------------------------------------------
+
         if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
             const lm = res.multiHandLandmarks[0];
-            drawConnectors(ctx, lm, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 6});
-            drawLandmarks(ctx, lm, {color: '#FF0000', lineWidth: 3, radius: 4});
+            
+            // 绘制骨骼
+            // 由于坐标系被缩放了，线条和圆点最好稍微设细一点点，防止视觉上过粗
+            drawConnectors(ctx, lm, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
+            drawLandmarks(ctx, lm, {color: '#FF0000', lineWidth: 2, radius: 3});
             
             const ges = detect(lm);
-            if (state.status === 'WAIT_OK' && ges === 'ok') startLevelSeq();
-            else if (state.status === 'PLAYING' && ges === state.target) roundEnd(true, "胜利!");
+            
+            if (state.status === 'WAIT_OK' && ges === 'ok') {
+                startLevelSeq();
+            }
+            // --- 防抖动逻辑 ---
+            else if (state.status === 'PLAYING') {
+                if (ges !== state.lastDetected) {
+                    state.lastDetected = ges;
+                    state.stableStartTime = Date.now();
+                } else if (ges) {
+                    const stableTime = Date.now() - state.stableStartTime;
+                    // 120ms 防抖
+                    if (stableTime > 120) {
+                        if (ges === state.target) roundEnd(true, "胜利!");
+                    }
+                }
+            }
         }
         ctx.restore();
     }
