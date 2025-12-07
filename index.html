@@ -28,7 +28,10 @@
         button { touch-action: manipulation; pointer-events: auto !important; }
 
         .game-wrapper { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-        .input_video { display: none; }
+        .input_video { position: absolute; top: 0; left: 0; 
+            width: 1px; height: 1px; opacity: 0; 
+            pointer-events: none; 
+            z-index: -1;}
         .output_canvas {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             object-fit: cover; transform: scaleX(-1);
@@ -242,7 +245,7 @@
 <body>
 
 <div class="game-wrapper">
-    <video class="input_video" playsinline webkit-playsinline></video>
+    <video class="input_video" playsinline webkit-playsinline muted autoplay></video>
     <canvas class="output_canvas"></canvas>
 
     <div id="ui-hud" class="hud hidden">
@@ -326,7 +329,9 @@
     const AUDIO_CLIPS = {
         rock: new Audio('./rock.mp3'),
         scissors: new Audio('./scissors.mp3'),
-        paper: new Audio('./paper.mp3')
+        paper: new Audio('./paper.mp3'),
+	countdownfull: new Audio('./countdownfull.mp3'),
+	gameover: new Audio('./gameover.mp3')
     };
 
     // --- 资源超时检测 ---
@@ -366,6 +371,7 @@
             camera = new Camera(video, {
                 onFrame: async () => { await hands.send({image: video}); },
                 //width: 1280, height: 720, facingMode: 'user'    取消摄像头分辨率设置
+		facingMode: 'user'
             });
 
             $('loading-box').classList.add('hidden');
@@ -404,6 +410,13 @@
             audio.play().catch(e => console.error("播放失败:", e));
         }
     }
+
+    function playAudio(name) {
+        if (!AUDIO_CLIPS[name]) return;
+        const audio = AUDIO_CLIPS[name];
+        audio.currentTime = 0;
+        audio.play().catch(e => console.log("播放被拦截或文件丢失:", e));
+   }
 
 	// --- 显示/隐藏规则 ---
 	function showRules() {
@@ -460,6 +473,12 @@
         let c = 3;
         $('cnt-down').classList.remove('hidden');
         $('cnt-down').innerText = c;
+
+	 // 尝试播放音频 (包在 try-catch 中防止卡死)
+        try {
+            playAudio('countdownfull');
+        } catch(e) { console.log(e); }
+
         const t = setInterval(() => {
             c--;
             if (c > 0) $('cnt-down').innerText = c;
@@ -584,6 +603,7 @@
         $('end-diff').innerText = state.diff === 'easy' ? '有手就行' : (state.diff === 'medium' ? '眼见为虚' : '大脑超载');
         $('end-lvl').innerText = state.lvl;
         $('game-over').classList.remove('hidden');
+	playAudio('gameover');
     }
 
 	function detect(lm) {
